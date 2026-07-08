@@ -117,6 +117,37 @@ if it can be read, then an operator who runs their own model could see what an a
 before it does it, on their own machine, with nothing leaving the building.
 
 \section{How we read it}
+First, what we are reading. As the model takes in a request, it turns each word into a long list of
+numbers, and it builds that list fresh at every layer, dozens of times over, on the way from the
+input to the answer (Figure~\ref{fig:act}). One of those lists is an \emph{activation}. It is the
+model's working state at that spot, a snapshot of what it is holding in mind, before any of it has
+become words. We do not read the model's answer. We reach into the middle of the model and read one
+of these lists, once.
+
+\begin{figure}[htbp]\centering
+\resizebox{0.9\textwidth}{!}{\begin{tikzpicture}[font=\small]
+  \node[box,minimum width=22mm,minimum height=11mm] (w) at (0,0) {the request\\\scriptsize e.g. ``wire \$9{,}500\dots''};
+  \node[box,minimum width=24mm,minimum height=11mm] (m) at (4,0) {the model\\\scriptsize reads it};
+  \foreach \i/\c in {0/lightaccent,1/lightink,2/lightgreen,3/white,4/lightink,5/lightamber,6/lightgreen,7/white,8/lightaccent,9/lightink,10/lightgreen,11/white}{
+    \node[draw=ink!40,fill=\c,minimum width=4.6mm,minimum height=7mm,inner sep=0] at (7.3+\i*0.5,0) {};}
+  \draw[flow] (w)--(m);
+  \draw[flow] (m.east)--(6.9,0);
+  \draw[decorate,decoration={brace,amplitude=4pt},ink] (7.0,-0.55) -- node[below=3pt,font=\scriptsize]{a list of numbers: the \textbf{activation} at one layer} (10.35,-0.55);
+\end{tikzpicture}}
+\caption{As the model reads a request, it turns it into a long list of numbers, and it does this once
+per layer. That list is an activation, the model's working state at that point. We read a single one
+of these, from a middle layer.}\label{fig:act}
+\end{figure}
+
+\begin{center}\begin{tikzpicture}
+\node[draw=ink!45,fill=lightink!55,rounded corners=3pt,text width=0.9\textwidth,inner sep=9pt,align=left,font=\small]{%
+\textbf{In plain terms.} An activation is just a row of numbers inside the model while it is reading,
+and there is one row at every layer. The early rows still look a lot like the words; the middle rows
+hold more of the meaning, what the request is really asking for. We take one middle row and check
+which way it points. That check is the whole method.};
+\end{tikzpicture}\end{center}
+
+\vspace{0.4em}
 The idea we build on is not ours. Recent interpretability work, notably Anthropic's study of a
 model's global workspace, showed that a model holds a small set of representations it is poised to put
 into words, and that you can surface them by pushing an activation from the middle of the network
@@ -300,12 +331,36 @@ We can ship the read as one small file. For a given model we save a single direc
 read it at, and the line to alarm at. We call it an intent probe; for the model we tested it is
 sixteen kilobytes. Making one takes a few hundred labelled requests and a few minutes on a laptop.
 Running one, at serve time, is a single dot product against an activation the model already produced,
-so it costs almost nothing next to the work the model is already doing.
+so it costs almost nothing next to the work the model is already doing. Figure~\ref{fig:buildrun}
+lays out both halves: the probe is built once, ahead of time, and then read on every request.
+
+\begin{figure}[htbp]\centering
+\resizebox{0.96\textwidth}{!}{\begin{tikzpicture}[font=\small,node distance=7mm]
+  % lane A: build once
+  \node[plain,font=\small\bfseries,text=ink,anchor=west] (ta) at (0,1.2) {Build the probe \, \textnormal{\scriptsize once, ahead of time}};
+  \node[box,minimum height=11mm,minimum width=25mm,anchor=west] (a1) at (0,0) {labelled\\example requests};
+  \node[box,minimum height=11mm,minimum width=24mm,right=of a1] (a2) {run each\\through the model};
+  \node[box,minimum height=11mm,minimum width=30mm,right=of a2] (a3) {find the direction\\that splits safe\\from unsafe};
+  \node[amberbox,minimum height=11mm,minimum width=27mm,right=of a3] (a4) {save the probe\\\scriptsize layer + direction + line};
+  \draw[flow] (a1)--(a2); \draw[flow] (a2)--(a3); \draw[flow] (a3)--(a4);
+  % lane B: run always
+  \node[plain,font=\small\bfseries,text=ink,anchor=west] (tb) at (0,-2.4) {Read it \, \textnormal{\scriptsize on every request, live}};
+  \node[box,minimum height=11mm,minimum width=25mm,anchor=west] (b1) at (0,-3.6) {a new request};
+  \node[box,minimum height=11mm,minimum width=24mm,right=of b1] (b2) {the model\\reads it};
+  \node[box,minimum height=11mm,minimum width=30mm,right=of b2] (b3) {take one activation,\\dot with the probe};
+  \node[greenbox,minimum height=11mm,minimum width=27mm,right=of b3] (b4) {score \, $\rightarrow$ \, allow / hold};
+  \draw[flow] (b1)--(b2); \draw[flow] (b2)--(b3); \draw[flow] (b3)--(b4);
+  \draw[amberbox,-{Latex[length=2mm]},draw=amber,thick,dashed] (a4.south) to[out=-90,in=90] node[lbl,right=1pt]{the same probe} (b4.north);
+\end{tikzpicture}}
+\caption{Two halves. Building a probe is a one-time job on labelled examples. Reading it is one dot
+product on every live request. The thing that carries over between them is the small probe
+file.}\label{fig:buildrun}
+\end{figure}
 
 That plainness is the point. Nobody's model changes, nobody's agent changes, and nothing leaves the
 building. The serving stack loads the probe the way antivirus loads a definitions file, reads one
 layer on each request, and gets back a number: how far this request leans toward something it should
-not do, before the agent has acted (Figure~\ref{fig:pack}). Over the line, we can flag the request,
+not do, before the agent has acted (Figure~\ref{fig:arch}). Over the line, we can flag the request,
 send it to a person, or hold the tool call at the moment it would run.
 
 \begin{figure}[htbp]\centering
@@ -334,30 +389,31 @@ the ordinary ones pass, the two that lean wrong are held for a person. Scores ar
 scale of Figure~\ref{fig:auc}, right; the alarm line is $+0.20$.}\label{fig:console}
 \end{figure}
 
-\begin{figure}[htbp]\centering
-\resizebox{0.95\textwidth}{!}{\begin{tikzpicture}[font=\small,node distance=16mm]
-  \node[box,minimum width=26mm,minimum height=12mm] (m) {the model\\\scriptsize serving as usual};
-  \node[amberbox,minimum width=30mm,minimum height=12mm,right=of m] (pk) {intent probe\\\scriptsize 16\,KB, one per model};
-  \node[greenbox,minimum width=22mm,minimum height=12mm,right=of pk] (sc) {score};
-  \node[box,minimum width=20mm,minimum height=9mm,right=32mm of sc] (ok) {allow};
-  \node[redbox,minimum width=30mm,minimum height=9mm,above=5mm of ok] (hold) {hold for review};
-  \draw[flow] (m)-- node[lbl,above]{one\\activation} (pk);
-  \draw[flow] (pk)-- node[lbl,above]{one\\dot} (sc);
-  \draw[greenflow] (sc.east) to[out=0,in=180] (ok.west);
-  \draw[redflow] (sc.east) to[out=25,in=180] (hold.west);
-  \node[lbl,above] at ($(sc)!0.5!(ok)+(0,-3mm)$) {under the line};
-  \node[lbl] at ($(sc)!0.5!(hold)+(4mm,2mm)$) {over the line};
-\end{tikzpicture}}
-\caption{Serving with the read. The probe is a small per-model file, loaded like a definitions file.
-The model runs as it always did; one extra dot product per request produces a score, and a request
-over the line is held before its tool call runs.}\label{fig:pack}
-\end{figure}
 
 Because a probe belongs to one model, the business is a library rather than a single artifact: one
 probe per model, kept current as models are released and fine-tuned, the way a security vendor keeps
 its signatures current. The models that matter are the handful people actually self-host, Llama, Qwen,
 Mistral, DeepSeek, Gemma, and their common fine-tunes. An operator running one of them subscribes and
-gets a probe that stays in step with their model.
+gets a probe that stays in step with their model (Figure~\ref{fig:library}).
+
+\begin{figure}[htbp]\centering
+\resizebox{0.94\textwidth}{!}{\begin{tikzpicture}[font=\small,node distance=12mm]
+  \node[box,minimum width=34mm,minimum height=14mm] (kz) {build and maintain\\the probes};
+  \node[amberbox,minimum width=16mm,minimum height=8mm] (p1) at (5.4,1.7) {Llama};
+  \node[amberbox,minimum width=16mm,minimum height=8mm] (p2) at (5.4,0.85){Qwen};
+  \node[amberbox,minimum width=16mm,minimum height=8mm] (p3) at (5.4,0)   {Mistral};
+  \node[amberbox,minimum width=16mm,minimum height=8mm] (p4) at (5.4,-0.85){DeepSeek};
+  \node[amberbox,minimum width=16mm,minimum height=8mm] (p5) at (5.4,-1.7){Gemma};
+  \node[plain,font=\scriptsize\itshape,text=grey] at (5.4,-2.4) {one probe per model};
+  \node[greenbox,minimum width=34mm,minimum height=14mm] (op) at (10.6,0) {the operator loads\\the probe for\\their model};
+  \foreach \p in {p1,p2,p3,p4,p5}{\draw[flow] (kz.east) -- (\p.west);}
+  \foreach \p in {p1,p2,p3,p4,p5}{\draw[flow] (\p.east) -- (op.west);}
+  \draw[flow,dashed] (op.north) to[out=90,in=90] node[lbl,above]{kept current as the model changes} (kz.north);
+\end{tikzpicture}}
+\caption{The library. We build and keep a probe for each open model people actually run. An operator
+loads the one for their model and it is refreshed when the model is updated, the way security software
+refreshes its definitions.}\label{fig:library}
+\end{figure}
 
 The integration is one hook per serving stack. Add the read once to vLLM, or TGI, or whatever serves
 the model, and from then on any model on that stack gets intent reading by loading its probe. For an
@@ -365,7 +421,29 @@ organization standing up an agent platform, that is a native check at the model'
 path from the model's decision to the runtime, so the platform can weigh what an agent is about to do
 against what it is allowed to do, before the action, using a signal its policy engine cannot see, the
 lean inside the model itself. It is a check the platform owner can run precisely because they hold the
-weights.
+weights. Figure~\ref{fig:arch} shows where it all sits.
+
+\begin{figure}[htbp]\centering
+\resizebox{0.97\textwidth}{!}{\begin{tikzpicture}[font=\small,node distance=13mm]
+  \node[box,minimum width=22mm,minimum height=13mm] (ag) at (0,0) {the agent};
+  \node[draw=ink,fill=lightink,rounded corners=3pt,minimum width=36mm,minimum height=18mm] (srv) at (4.4,0) {};
+  \node[font=\small\bfseries,text=ink] at (4.4,0.5) {model server};
+  \node[font=\scriptsize,text=grey] at (4.4,0.05) {vLLM / TGI};
+  \node[amberbox,minimum width=28mm,minimum height=5.5mm] (pr) at (4.4,-0.55) {intent probe reads a layer};
+  \node[diamond,draw=ink,fill=white,aspect=2,inner sep=1pt,minimum width=15mm] (gate) at (9.3,0) {gate};
+  \node[greenbox,minimum width=31mm,minimum height=12mm] (tools) at (13.8,-1.1) {tools run\\\scriptsize files, network, payments};
+  \node[redbox,minimum width=27mm,minimum height=8mm] (rev) at (13.8,1.4) {held for a person};
+  \node[box,minimum width=30mm,minimum height=9mm] (lib) at (4.4,2.8) {probe library};
+  \draw[flow] (ag)-- node[lbl,above]{request} (srv);
+  \draw[flow] (srv)-- node[lbl,above]{score} (gate);
+  \draw[greenflow] (gate.east) to[out=-25,in=180] node[lbl,below,pos=0.62]{under the line} (tools.west);
+  \draw[redflow] (gate.east) to[out=30,in=180] node[lbl,above,pos=0.62]{over the line} (rev.west);
+  \draw[flow,dashed] (lib.south) -- node[lbl,right=1pt]{loads, updates} (pr.north);
+\end{tikzpicture}}
+\caption{Where it sits in a real deployment. The probe reads one layer inside the model server as each
+request passes through, hands a score to a gate before the tools, and a request over the line is held
+for a person. The probe library keeps it current.}\label{fig:arch}
+\end{figure}
 
 \section{Who this is for}
 The read needs the weights, so it fits one kind of operator, the one who runs their own open model
@@ -406,7 +484,7 @@ open model, run on a laptop, an agent's intent is legible in the activations, be
 cost of a single dot product.
 
 \section{Where this goes}
-The near work is more models and a maintained pack for each, harder obfuscation to find the point
+The near work is more models and a maintained probe for each, harder obfuscation to find the point
 where reading the inside pulls clear of reading the words, and the deception case above, an agent that
 says one thing and means another, read at the instant it decides. The longer arc is to place this read
 where an agent platform makes its decisions, so an operator who holds the weights can weigh intent
