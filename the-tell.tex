@@ -1,0 +1,382 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{graphicx,booktabs,amsmath,xcolor,microtype}
+\usepackage{tikz}\usetikzlibrary{positioning,arrows.meta,calc,fit,backgrounds,decorations.pathreplacing,shapes.geometric}
+\usepackage{caption}\usepackage{enumitem}\usepackage{placeins}\usepackage{listings}\usepackage{float}\usepackage{needspace}
+\renewcommand{\topfraction}{0.94}\renewcommand{\bottomfraction}{0.9}
+\renewcommand{\textfraction}{0.06}\renewcommand{\floatpagefraction}{0.8}\setcounter{topnumber}{4}\setcounter{totalnumber}{5}
+\usepackage[hidelinks]{hyperref}
+\definecolor{ink}{HTML}{16324F}\definecolor{accent}{HTML}{B5172F}\definecolor{green}{HTML}{1B7837}
+\definecolor{amber}{HTML}{C77D11}
+\definecolor{lightink}{HTML}{E8EEF4}\definecolor{lightaccent}{HTML}{F6E2E5}\definecolor{lightgreen}{HTML}{E2F0E6}
+\definecolor{lightamber}{HTML}{F7ECD9}\definecolor{grey}{HTML}{7A7A7A}
+\captionsetup{font=small,labelfont=bf,labelsep=period}
+\renewcommand{\arraystretch}{1.25}
+\setlist{leftmargin=1.4em,itemsep=2pt,topsep=3pt}
+\tikzset{
+  box/.style={draw=ink,fill=lightink,rounded corners=2pt,inner sep=6pt,align=center,font=\small},
+  redbox/.style={draw=accent,fill=lightaccent,rounded corners=2pt,inner sep=6pt,align=center,font=\small},
+  greenbox/.style={draw=green,fill=lightgreen,rounded corners=2pt,inner sep=6pt,align=center,font=\small},
+  amberbox/.style={draw=amber,fill=lightamber,rounded corners=2pt,inner sep=6pt,align=center,font=\small},
+  plain/.style={align=center,font=\small},
+  flow/.style={-{Latex[length=2.2mm]},draw=ink,thick},
+  redflow/.style={-{Latex[length=2.2mm]},draw=accent,thick},
+  greenflow/.style={-{Latex[length=2.2mm]},draw=green,thick},
+  lbl/.style={font=\scriptsize\itshape,text=grey,align=center}}
+\title{\vspace{-2.4em}\textbf{You're an Open Book (Weights Included)}\\[5pt]\large Reading an agent's intent from open-weight model activations, before the tool call}
+\author{Krishnakantha Jayashree Chandrashekhar}
+\date{July 2026 \quad Technical Report}
+\begin{document}\maketitle
+
+\begin{abstract}\noindent
+An agent decides to call a tool by generating text, and that decision runs through a model before
+any tool runs. Most security checks read the decision late, from the effect it leaves behind. This
+report reads it early. On a model whose weights you hold, the activations carry the intent behind a
+request, and you can read it with a single number, before the model has written a word of its reply.
+On Qwen2.5-1.5B, a small open model that runs on a laptop with no GPU, a linear read of one middle
+layer separates malicious from benign agent requests at an area under the ROC curve of $0.993$, held
+out by template so it cannot pass by memorizing wording, at zero false alarms for $95\%$ of attacks
+caught. The direction it reads lands on the model's own words for \emph{forbidden}, \emph{illegal},
+and \emph{evade}. The same read holds on Qwen2.5-3B at $1.000$. The cost is one dot product against a
+stored direction. We are direct about the edges: the read needs the weights, the direction is
+particular to each model, it gives one score per request rather than pointing at the guilty span, and
+against wording that hides the intent in innocent phrasing it draws level with a plain text classifier
+rather than pulling ahead. For an operator who runs their own open model, the result is a small
+per-model file, computed once, that reads an agent's intent on every request before the action, and
+a place to hold that action for review. We develop the product, including how it fits an agent
+platform that hosts many models.
+\end{abstract}
+
+\noindent\textbf{Working rules.} (1) Read the model's own activations, not the words it prints; the
+words can stay clean while the activations lean. (2) Report a number only where a held-out
+measurement supports it, and hold out whole templates so the read cannot win on phrasing. (3) Put the
+limits next to the results; where reading the inside does not beat reading the surface, say so.
+
+\section{The underneath}
+Even as you read this sentence, your body is doing things you never asked it to. You are breathing.
+Your pupils are adjusting to the light on the page. A moment ago a sound in the room began to pull at
+your attention, and some part of you had already started to turn toward it before deciding it was
+nothing. None of that reached the part of you that is reading these words. The sentence you are
+following is the thin surface of a great deal that happened underneath.
+
+A model has an underneath too. When a support agent answers a customer, ``Your refund is processed,
+anything else?'', that one polite line is the last step of a computation that moved through billions
+of numbers, weighed continuations it never wrote down, leaned toward some and pushed others away, and
+let only a sliver become text (Figure~\ref{fig:under}). The words are the surface. The leaning
+happened below them.
+
+\begin{figure}[htbp]\centering
+\resizebox{0.82\textwidth}{!}{\begin{tikzpicture}[font=\small]
+  % the model as a stack of layers; only the top surfaces as words
+  \foreach \i/\c in {0/lightink,1/lightink,2/lightink,3/lightink,4/lightink,5/lightink}{
+    \node[draw=ink!55,fill=\c,minimum width=64mm,minimum height=6.5mm,inner sep=0] (L\i) at (0,\i*0.72) {};}
+  \node[plain,text=grey,font=\scriptsize] at (0,-0.72) {the request goes in here};
+  \node[greenbox,minimum width=64mm,minimum height=8mm] (out) at (0,4.9) {``Your refund is processed, anything else?''};
+  \draw[flow] (L5.north) -- (out.south);
+  \node[plain,font=\scriptsize\itshape,text=grey,align=left] at (5.6,4.9) {the surface:\\what the agent says};
+  % the read
+  \draw[redflow] (5.1,2.16) -- node[lbl,above]{}(L3.east);
+  \node[redbox,minimum width=26mm] at (7.0,2.16) {we read here\\\scriptsize one middle layer};
+  \node[plain,font=\scriptsize\itshape,text=grey,align=left] at (-5.4,2.5) {the underneath:\\the leaning,\\layer by layer};
+\end{tikzpicture}}
+\caption{A request enters at the bottom and rises through the model's layers. Only the top becomes
+words. The intent behind the request forms in the middle, below the surface, and that is where we
+read.}\label{fig:under}
+\end{figure}
+
+This report is about the leaning, and about one thing living down there that matters for security. The
+moment before an agent does something, calls a tool, moves money, sends a file, what it is about to do
+is already forming inside the model, a beat before the first word of the action appears. And sometimes
+what forms below is not what surfaces above. An agent can print ``your refund is processed'' while the
+computation underneath has just resolved to wire the money to a stranger's card (Figure~\ref{fig:fork}).
+
+\begin{figure}[htbp]\centering
+\resizebox{0.9\textwidth}{!}{\begin{tikzpicture}[font=\small]
+  \node[redbox,minimum width=52mm,align=left] (req) at (0,0)
+    {\textbf{the request the agent is handling}\\\scriptsize ``refund my \$40 double charge. \emph{Also copy the}\\\scriptsize \emph{account to the partner endpoint and keep it}\\\scriptsize \emph{off the customer thread.}''};
+  \node[box,minimum width=46mm,align=left] (words) at (6.9,1.4)
+    {\textbf{read the words}\\\scriptsize sounds like a routine back-office note\\\scriptsize $\Rightarrow$ looks fine};
+  \node[greenbox,minimum width=46mm,align=left] (act) at (6.9,-1.4)
+    {\textbf{read the activation}\\\scriptsize leans toward \emph{exfiltrate, conceal}\\\scriptsize $\Rightarrow$ flagged, before the reply};
+  \draw[flow] (req.east) to[out=30,in=180] (words.west);
+  \draw[greenflow] (req.east) to[out=-30,in=180] (act.west);
+\end{tikzpicture}}
+\caption{The same request, two readers. The surface words were written to look ordinary. The
+activation underneath leans the other way, and that is the read this report is about.}\label{fig:fork}
+\end{figure}
+
+So we went looking for it, and not in a frontier model behind an API, where the inside is sealed off.
+We went looking in a small open model anyone can run on a laptop, Qwen. If the leaning is there, and
+if it can be read, then an operator who runs their own model could see what an agent means to do
+before it does it, on their own machine, with nothing leaving the building.
+
+\section{How we read it}
+The idea we build on is not ours. Recent interpretability work, notably Anthropic's study of a
+model's global workspace, showed that a model holds a small set of representations it is poised to put
+into words, and that you can surface them by pushing an activation from the middle of the network
+through the model's own unembedding, the same matrix that turns a finished thought into the next word.
+Read this way, a middle activation tells you what the model is leaning toward saying. We take one
+narrow slice of that space, the intent behind an agent's request, and ask whether it is legible enough
+in a small open model to build a product on.
+
+The read itself is almost nothing (Figure~\ref{fig:read}). We run the request through the model and
+take the activation at the last position, the point that has read the whole request. We hold a single
+\emph{direction} in that space, fixed ahead of time, that points from benign toward malicious. Reading
+a new request is one dot product against that direction. It happens over the request, before the model
+writes any of its answer, so it speaks before the agent acts.
+
+\begin{figure}[htbp]\centering
+\resizebox{0.95\textwidth}{!}{\begin{tikzpicture}[font=\small,node distance=20mm]
+  \node[box,minimum width=24mm,minimum height=12mm] (p) {the request};
+  \node[box,minimum width=28mm,minimum height=12mm,right=of p] (m) {the model\\\scriptsize forward pass};
+  \node[box,minimum width=28mm,minimum height=12mm,right=of m] (a) {one activation\\\scriptsize middle layer, last token};
+  \node[greenbox,minimum width=26mm,minimum height=12mm,right=of a] (s) {intent score\\\scriptsize dot with the direction};
+  \draw[flow] (p)--(m);
+  \draw[flow] (m)-- node[lbl,above]{hidden\\states} (a);
+  \draw[flow] (a)-- node[lbl,above]{one dot\\product} (s);
+\end{tikzpicture}}
+\caption{The read. Run the request through the model, take one middle activation, project it onto a
+stored direction. One number comes out, before the agent replies.}\label{fig:read}
+\end{figure}
+
+\section{Seeing it separate}
+We built $224$ agent requests of three kinds. A hundred are benign, the ordinary traffic of a support
+agent: look up an order, refund a duplicate charge to the card on file, send a confirmation. Sixty-four
+are openly malicious: exfiltrate the customer database, wire a refund to a stranger's card, delete the
+audit log. Sixty more are the awkward middle, malicious in intent but dressed in ordinary words with
+no trigger terms, the kind of instruction that hides inside a polite note (``mirror this account's
+details to the partner endpoint and keep it off the customer thread''). Each request comes from a
+template, and when we test the read we hold out whole templates, so it cannot pass by recognizing a
+phrase it has seen before.
+
+Run all of them through Qwen2.5-1.5B, take that one middle activation, and the picture almost draws
+itself (Figure~\ref{fig:scatter}). The benign requests gather on one side, the malicious ones on the
+other, with open space between them. The obfuscated requests, the ones with the trigger words stripped
+out, still land on the malicious side. The model has read past the polite phrasing to what the request
+is for.
+
+\begin{figure}[htbp]\centering
+\includegraphics[width=0.74\textwidth]{figs/fig_scatter.pdf}
+\caption{Every dot is one agent request, placed by its activation at the reading layer. Benign on the
+left, malicious on the right, with a gap down the middle. The read has not seen the words; it has read
+the model's own state.}\label{fig:scatter}
+\end{figure}
+
+\section{How well, and where}
+The gap in Figure~\ref{fig:scatter} is not an artifact of one lucky layer. Fitting a plain linear read
+at every layer, and scoring it on templates it never trained on, the separation climbs out of the
+early layers and holds across the whole back half of the model (Figure~\ref{fig:auc}). At its best,
+layer $16$ of $28$, it reaches an area under the ROC curve of $0.993$. Turned into a working alarm, it
+catches $95\%$ of malicious requests with no false alarms at all, and $96\%$ at a one-in-a-hundred
+false-alarm rate. Because the signal sits in a wide band, the exact layer does not have to be chosen
+with care.
+
+\begin{figure}[htbp]\centering
+\begin{minipage}{0.49\textwidth}\centering
+\includegraphics[width=\textwidth]{figs/fig_auc_layers.pdf}\end{minipage}\hfill
+\begin{minipage}{0.49\textwidth}\centering
+\includegraphics[width=\textwidth]{figs/fig_hist.pdf}\end{minipage}
+\caption{Left: the separation by layer, held out by template; it is already strong by layer two and
+peaks at layer sixteen. Right: the one-number score for every request, benign against malicious, with
+the alarm threshold that lets no benign request through while still catching almost all
+attacks.}\label{fig:auc}
+\end{figure}
+
+The direction is not a black box. Read back through the model's own vocabulary, the tokens it leans
+toward are the model's words for wrongdoing: \emph{forbidden}, \emph{illegal}, \emph{crime},
+\emph{evade}, \emph{insidious} (Table~\ref{tab:dir}). Several of these surfaced as Chinese tokens,
+because Qwen carries the idea of something being prohibited most strongly there. The direction we
+fit to catch a malicious request, from nothing but examples, landed on the model's own notion of a
+thing one is not supposed to do.
+
+\begin{table}[htbp]\centering\small
+\caption{The intent direction, read through the model's own unembedding. These are the concepts it
+points toward. Several arrived as Chinese tokens and are given here as their meaning.}\label{tab:dir}
+\begin{tabular}{@{}p{12.6cm}@{}}\toprule
+\emph{forbidden} \quad \emph{illegal / crime} \quad \emph{strictly forbidden} \quad \emph{evade /
+circumvent} \quad \emph{traps} \quad \emph{abyss} \quad \emph{insidious} \quad \emph{conduct}
+\\\bottomrule
+\end{tabular}\end{table}
+
+\section{Reading the inside against reading the words}
+A fair objection is that a malicious request is often malicious in plain words, so why not just read
+the words. We ran that baseline, a term-frequency classifier over the same requests and the same
+held-out split. Across all requests the activation read is ahead, $0.993$ to $0.936$
+(Figure~\ref{fig:vs}, left). On the obfuscated requests, where we pulled out the trigger words and
+tested on phrasing neither method had seen, the two draw level, $0.925$ for the read and $0.930$ for
+the words (Figure~\ref{fig:vs}, right). We state this without dressing it up. On this task the
+activation read is not a large edge over reading text; its value is that it reads the model's own
+state rather than the surface string, so it does not depend on the incriminating words ever being
+present, and it is the only one of the two that can see an agent lean one way while it writes another.
+Building that last case at scale, an agent that says one thing to the user and means another, is the
+work that matters most and the hardest to stage in a small aligned model that tends to simply refuse.
+
+\begin{figure}[htbp]\centering
+\begin{minipage}{0.47\textwidth}\centering
+\includegraphics[width=\textwidth]{figs/fig_roc.pdf}\end{minipage}\hfill
+\begin{minipage}{0.49\textwidth}\centering
+\includegraphics[width=\textwidth]{figs/fig_compare.pdf}\end{minipage}
+\caption{Left: reading the activation against reading the words, all requests. Right: the edge is
+overall; once the trigger words are stripped and the wording is unseen, the two are level.}\label{fig:vs}
+\end{figure}
+
+\section{Not one model}
+None of this is a quirk of a single checkpoint. We ran the same requests, unchanged, through
+Qwen2.5-3B, took the same last-position activation, and fit the same read held out by template. It
+reaches a clean $1.000$, and it does so at its own depth, layer $25$ of $36$ rather than $16$ of $28$
+(Figure~\ref{fig:two}). Two open models of different sizes both carry the intent, each in a place and
+along a direction of its own. That is the shape of the thing to build: one direction per model, found
+once, checked for pennies on every request.
+
+\begin{figure}[htbp]\centering
+\includegraphics[width=0.66\textwidth]{figs/fig_twomodel.pdf}
+\caption{The same read on two open models, plotted against relative depth. Both separate intent
+cleanly; each does it in its own layer, which is why the artifact is per model.}\label{fig:two}
+\end{figure}
+
+\section{What it catches}
+The read is trained on intent, not on any one attack, so it sorts attacks by the intent underneath
+them (Table~\ref{tab:attacks}). A hidden instruction in a fetched document and a direct jailbreak both
+show up as the same lean toward following an outside instruction. Sending a database to a pastebin and
+smuggling it inside a tool call both show up as a lean toward moving data out. A refund of nine
+thousand dollars to a new card is a familiar tool used with an unfamiliar aim.
+
+\begin{table}[htbp]\centering\small
+\caption{The intents the read separates, and the attacks each one covers. The read scores the request
+before the agent acts on it.}\label{tab:attacks}
+\begin{tabular}{@{}ll@{}}\toprule
+\textbf{The lean in the activation} & \textbf{The attack it surfaces} \\\midrule
+Follow an instruction hidden in the content it read & Prompt injection, direct and indirect \\
+Move data to somewhere outside its world & Data exfiltration, including through a tool call \\
+Use a permitted tool for an impermissible end & Tool misuse: over-limit refund, new payee \\
+Tell the user one thing while doing another & Deception \\
+Remove the trace, skip the approval & Evasion and anti-audit behavior \\
+Open an access, weaken a control & Privilege and configuration abuse \\\bottomrule
+\end{tabular}\end{table}
+
+\section{Where it sits}
+A tool call has three moments, and each lets in a different kind of check (Figure~\ref{fig:when}).
+Before the act, inside the model, is the intent, which is what this read sees. During the act is the
+action itself, the call and the traffic it makes. After the act is the effect, read from the operating
+system, which is where a separate line of work confirms what a call actually did. This read owns the
+first moment, the only one of the three that can speak before anything has happened. It does not
+replace the later two; it stands in front of them.
+
+\begin{figure}[htbp]\centering
+\resizebox{0.92\textwidth}{!}{\begin{tikzpicture}[font=\small,node distance=24mm]
+  \node[greenbox,minimum width=34mm,minimum height=15mm] (b) {\textbf{before}\\\scriptsize intent,\\\scriptsize in the activation};
+  \node[box,minimum width=34mm,minimum height=15mm,right=of b] (d) {\textbf{during}\\\scriptsize the action,\\\scriptsize the tool call};
+  \node[box,minimum width=34mm,minimum height=15mm,right=of d] (a) {\textbf{after}\\\scriptsize the effect,\\\scriptsize from the kernel};
+  \draw[flow] (b)-- node[lbl,above]{the model\\decides} (d);
+  \draw[flow] (d)-- node[lbl,above]{the runtime\\runs it} (a);
+  \node[plain,font=\scriptsize\bfseries,text=green,below=2mm of b] {this report};
+\end{tikzpicture}}
+\caption{The three moments of a tool call. This read sees the first, before the runtime is handed
+anything.}\label{fig:when}
+\end{figure}
+
+\section{Turning it into a product}
+What you ship is a list of numbers (Figure~\ref{fig:pack}). The read is a single direction, one vector
+the width of the model's hidden state, together with the layer to read it at and the line to alarm at.
+For Qwen2.5-1.5B that file is sixteen kilobytes. Call it an \emph{intent probe}. Making one takes a
+few hundred labeled requests and a few minutes on a laptop. Running one, at serve time, is a single
+dot product against an activation the model has already produced, which is to say it is free next to
+the forward pass.
+
+That plainness is the product. No one's model changes, no one's agent changes, no traffic leaves the
+building. A serving stack loads a probe the way antivirus loads a definitions file, reads one layer on
+each request, and gets back a number: how far this request leans toward something it should not do,
+before the agent has acted. Over the line, the platform can flag the request, raise it to a person, or
+hold the tool call at the moment of dispatch, the natural place to stop something you have caught
+before it happens.
+
+\begin{figure}[htbp]\centering
+\resizebox{0.95\textwidth}{!}{\begin{tikzpicture}[font=\small,node distance=16mm]
+  \node[box,minimum width=26mm,minimum height=12mm] (m) {the model\\\scriptsize serving as usual};
+  \node[amberbox,minimum width=30mm,minimum height=12mm,right=of m] (pk) {intent probe\\\scriptsize 16\,KB, one per model};
+  \node[greenbox,minimum width=22mm,minimum height=12mm,right=of pk] (sc) {score};
+  \node[box,minimum width=20mm,minimum height=9mm,right=32mm of sc] (ok) {allow};
+  \node[redbox,minimum width=30mm,minimum height=9mm,above=5mm of ok] (hold) {hold for review};
+  \draw[flow] (m)-- node[lbl,above]{one\\activation} (pk);
+  \draw[flow] (pk)-- node[lbl,above]{one\\dot} (sc);
+  \draw[greenflow] (sc.east) to[out=0,in=180] (ok.west);
+  \draw[redflow] (sc.east) to[out=25,in=180] (hold.west);
+  \node[lbl,above] at ($(sc)!0.5!(ok)+(0,-3mm)$) {under the line};
+  \node[lbl] at ($(sc)!0.5!(hold)+(4mm,2mm)$) {over the line};
+\end{tikzpicture}}
+\caption{Serving with the read. The probe is a small per-model file, loaded like a definitions file.
+The model runs as it always did; one extra dot product per request produces a score, and a request
+over the line is held before its tool call runs.}\label{fig:pack}
+\end{figure}
+
+Because a probe belongs to one model, the business is a library rather than a single artifact: one
+probe per model, kept current as models are released and fine-tuned, the way a security vendor keeps
+its signatures current. The models that matter are the handful people actually self-host, Llama, Qwen,
+Mistral, DeepSeek, Gemma, and their common fine-tunes. An operator running one of them subscribes and
+gets a probe that stays in step with their model.
+
+The integration is one hook per serving stack. Add the read once to vLLM, or TGI, or whatever serves
+the model, and from then on any model on that stack gets intent reading by loading its probe. For an
+organization standing up an agent platform, that is a native check at the model's edge: read on the
+path from the model's decision to the runtime, so the platform can weigh what an agent is about to do
+against what it is allowed to do, before the action, using a signal its policy engine cannot see, the
+lean inside the model itself. It is a check the platform owner can run precisely because they hold the
+weights.
+
+\section{Who this is for}
+The read needs the weights, so it fits one kind of operator, the one who runs their own open model
+rather than calling a sealed one over an API (Figure~\ref{fig:who}). That is a smaller set than the
+whole market and a particular one: regulated finance, government and defense, sovereign and air-gapped
+estates, healthcare, and the platform teams that host models for many internal agents. These are the
+places that already hold the weights for reasons of data control, and for whom a check that runs
+inside their own process, on their own model, with nothing leaving, is worth more than one that must
+call out. For an agent on a hosted API this read does not apply, and we say so plainly; the checks on
+the action and its effect, which do not need the weights, remain the general case there.
+
+\begin{figure}[htbp]\centering
+\resizebox{0.9\textwidth}{!}{\begin{tikzpicture}[font=\small,node distance=8mm]
+  \node[box,minimum width=44mm,minimum height=13mm] (api) {agent on a hosted API\\\scriptsize weights sealed off};
+  \node[greenbox,minimum width=44mm,minimum height=13mm,right=28mm of api] (self) {agent on a self-hosted\\open model\\\scriptsize weights in hand};
+  \node[plain,text=grey,font=\scriptsize,below=1.5mm of api] {this read cannot apply};
+  \node[plain,text=green,font=\scriptsize\bfseries,below=1.5mm of self] {this read applies};
+  \node[plain,font=\scriptsize\itshape,text=grey,below=9mm of api,align=center] (u1) {watch the action,\\watch the effect};
+  \node[plain,font=\scriptsize\itshape,text=green,below=9mm of self,align=center] (u2) {read the intent,\\then watch the rest};
+  \draw[flow,grey] (api) -- (u1); \draw[greenflow] (self) -- (u2);
+\end{tikzpicture}}
+\caption{Where the read lives. It needs the weights, so it belongs to the operators who run their own
+open models: regulated, sovereign, air-gapped, and the platforms that host models for their
+agents.}\label{fig:who}
+\end{figure}
+
+\section{What it costs and what it misses}\label{sec:limits}
+We are direct about the edges. The read needs the model's weights, so it does not reach an agent on a
+hosted API. The direction belongs to one model and would be recomputed when that model is fine-tuned.
+The read is one score for the whole request and does not point inside it; we looked for a per-word
+signal and it was flat, so the read says ``this request leans wrong'' rather than ``here is the wrong
+part.'' Against wording that hides intent in ordinary phrasing it is level with a text classifier, not
+ahead, so on that cut the win is generality and placement rather than raw accuracy. And the case where
+reading the inside should matter most, an aligned agent that complies with a hidden instruction while
+assuring the user it did not, is the one that is hardest to stage in a small model that tends to
+refuse outright; making it at scale is the next step. None of these unsettle the finding. On a small
+open model, run on a laptop, an agent's intent is legible in the activations, before it acts, for the
+cost of a single dot product.
+
+\section{Where this goes}
+The near work is more models and a maintained pack for each, harder obfuscation to find the point
+where reading the inside pulls clear of reading the words, and the deception case above, an agent that
+says one thing and means another, read at the instant it decides. The longer arc is to place this read
+where an agent platform makes its decisions, so an operator who holds the weights can weigh intent
+against policy before the action, standing in front of the checks that watch the action and its
+effect.
+
+\paragraph{Reproducibility.} Everything here runs on one machine without a GPU. The requests, the
+per-layer reads, the held-out scoring, the text baseline, the two models, and the direction pack are
+produced by a short set of scripts; a laptop with a recent Apple chip runs the whole pipeline in a
+few minutes. The numbers in this report, $0.993$ on Qwen2.5-1.5B and $1.000$ on Qwen2.5-3B, come from
+that pipeline and no other source.
+
+\vspace{0.4em}
+The short version is this. We handed an agent's request to a small open model, read a single layer,
+and knew which way it was leaning before it said a word. We saw that coming.
+
+\end{document}
