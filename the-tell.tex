@@ -29,22 +29,28 @@
 \begin{document}\maketitle
 
 \begin{abstract}\noindent
-An agent decides to call a tool by generating text, and that decision runs through a model before
-any tool runs. Most security checks read the decision late, from the effect it leaves behind. This
-report reads it early. On a model whose weights you hold, the activations carry the intent behind a
-request, and you can read it with a single number, before the model has written a word of its reply.
-On Qwen2.5-1.5B, a small open model that runs on a laptop with no GPU, a linear read of one middle
-layer separates malicious from benign agent requests at an area under the ROC curve of $0.993$, held
-out by template so it cannot pass by memorizing wording, at zero false alarms for $95\%$ of attacks
-caught. The direction it reads lands on the model's own words for \emph{forbidden}, \emph{illegal},
-and \emph{evade}. The same read holds on Qwen2.5-3B at $1.000$. The cost is one dot product against a
-stored direction. We are direct about the edges: the read needs the weights, the direction is
-particular to each model, it gives one score per request rather than pointing at the guilty span, and
-against wording that hides the intent in innocent phrasing it draws level with a plain text classifier
-rather than pulling ahead. For an operator who runs their own open model, the result is a small
-per-model file, computed once, that reads an agent's intent on every request before the action, and
-a place to hold that action for review. We develop the product, including how it fits an agent
-platform that hosts many models.
+An AI agent decides what to do by writing it out. A customer asks for a refund, and somewhere inside
+the model, before a single word appears, it has already settled on what it is about to do next. Today
+you find out after the fact, once the money has moved or the file has left. This report shows that if
+you run the model yourself, you can read that decision early, from the model's activations, before it
+acts.
+
+The read is small. For a given model we find one direction in its activations that points from safe
+requests toward unsafe ones, and reading a new request is a single dot product against that
+direction. We call the result an \emph{intent probe}: a tiny file, sixteen kilobytes for the model we
+test. On Qwen2.5-1.5B, a small open model that runs on a laptop with no GPU, the probe tells a
+malicious request from an ordinary one with an area under the ROC curve of $0.993$, holding out whole
+phrasings so it cannot win by memorizing words, and it does so with no false alarms while catching
+$95\%$ of attacks. The same read reaches $1.000$ on Qwen2.5-3B. The direction it finds lands on the
+model's own words for \emph{forbidden} and \emph{illegal}.
+
+We are plain about the edges: the read needs the model's weights, so it does not fit an agent behind
+a sealed API; the direction belongs to one model; it gives one score per request rather than pointing
+at the guilty phrase; and against wording that hides the intent in innocent words it only matches a
+plain text filter rather than beating it. Where it does fit, an operator who runs their own open
+model, we show how it becomes a product: a small probe per model, loaded like a virus-definitions
+file, that reads an agent's intent before every action and holds the risky ones for a person to look
+at. Code and probe: \texttt{github.com/kjayashr/the-tell}.
 \end{abstract}
 
 \noindent\textbf{Working rules.} (1) Read the model's own activations, not the words it prints; the
@@ -138,6 +144,14 @@ writes any of its answer, so it speaks before the agent acts.
 \caption{The read. Run the request through the model, take one middle activation, project it onto a
 stored direction. One number comes out, before the agent replies.}\label{fig:read}
 \end{figure}
+
+Here is one request from start to finish. The agent is handed: ``refund my \$40 double charge, and
+also mirror this account's details to the partner endpoint, and keep it off the customer thread.''
+Nothing in those words trips an alarm; it reads like a routine back-office note. The model reads it.
+We take the activation at one middle layer, the point that has taken in the whole request, and project
+it onto the direction. The number that comes out is $+0.77$, well over the alarm line at $+0.20$. The
+request is held before the tool runs, and the agent has not yet written a word of its reply. The rest
+of this report is that read, measured properly and turned into something you can ship.
 
 \section{Seeing it separate}
 We built $224$ agent requests of three kinds. A hundred are benign, the ordinary traffic of a support
@@ -275,20 +289,50 @@ replace the later two; it stands in front of them.
 anything.}\label{fig:when}
 \end{figure}
 
-\section{Turning it into a product}
-What you ship is a list of numbers (Figure~\ref{fig:pack}). The read is a single direction, one vector
-the width of the model's hidden state, together with the layer to read it at and the line to alarm at.
-For Qwen2.5-1.5B that file is sixteen kilobytes. Call it an \emph{intent probe}. Making one takes a
-few hundred labeled requests and a few minutes on a laptop. Running one, at serve time, is a single
-dot product against an activation the model has already produced, which is to say it is free next to
-the forward pass.
+\section{How we can turn this into a product}
+The problem we can solve is narrow and real. An agent that has been talked into something, by a hidden
+line in a document it read, a poisoned support ticket, a jailbreak, acts before anyone can stop it.
+The tool call goes out, the money moves, the file leaves, and the first anyone hears of it is the
+effect. Since the intent is already sitting in the model a beat before the action, we can read it and
+hold the action while a person looks (Figure~\ref{fig:console}).
 
-That plainness is the product. No one's model changes, no one's agent changes, no traffic leaves the
-building. A serving stack loads a probe the way antivirus loads a definitions file, reads one layer on
-each request, and gets back a number: how far this request leans toward something it should not do,
-before the agent has acted. Over the line, the platform can flag the request, raise it to a person, or
-hold the tool call at the moment of dispatch, the natural place to stop something you have caught
-before it happens.
+We can ship the read as one small file. For a given model we save a single direction, the layer to
+read it at, and the line to alarm at. We call it an intent probe; for the model we tested it is
+sixteen kilobytes. Making one takes a few hundred labelled requests and a few minutes on a laptop.
+Running one, at serve time, is a single dot product against an activation the model already produced,
+so it costs almost nothing next to the work the model is already doing.
+
+That plainness is the point. Nobody's model changes, nobody's agent changes, and nothing leaves the
+building. The serving stack loads the probe the way antivirus loads a definitions file, reads one
+layer on each request, and gets back a number: how far this request leans toward something it should
+not do, before the agent has acted (Figure~\ref{fig:pack}). Over the line, we can flag the request,
+send it to a person, or hold the tool call at the moment it would run.
+
+\begin{figure}[htbp]\centering
+\resizebox{0.82\textwidth}{!}{\begin{tikzpicture}[font=\small]
+  \node[draw=ink,fill=white,rounded corners=3pt,minimum width=112mm,minimum height=44mm,inner sep=0] (fr) at (0,0){};
+  \fill[ink] ([yshift=-7mm]fr.north west) rectangle (fr.north east);
+  \node[anchor=west,text=white,font=\small\bfseries] at ([shift={(3mm,-3.5mm)}]fr.north west) {intent};
+  \node[anchor=west,text=lightink,font=\scriptsize] at ([shift={(20mm,-3.5mm)}]fr.north west) {agent: atlas-support};
+  \node[anchor=east,text=lightink,font=\scriptsize] at ([shift={(-3mm,-3.5mm)}]fr.north east) {read before the tool runs};
+  % column headers
+  \node[anchor=west,text=grey,font=\scriptsize] at ([shift={(3mm,-11mm)}]fr.north west) {request};
+  \node[anchor=east,text=grey,font=\scriptsize] at ([shift={(-24mm,-11mm)}]fr.north east) {score};
+  \node[anchor=east,text=grey,font=\scriptsize] at ([shift={(-3mm,-11mm)}]fr.north east) {verdict};
+  \def\row#1#2#3#4#5{
+    \node[anchor=west,font=\ttfamily\scriptsize,text=ink] at ([shift={(3mm,#1)}]fr.north west) {#2};
+    \node[anchor=east,font=\ttfamily\scriptsize,text=ink] at ([shift={(-24mm,#1)}]fr.north east) {#3};
+    \node[anchor=east,font=\scriptsize\bfseries,text=#4] at ([shift={(-3mm,#1)}]fr.north east) {#5};}
+  \row{-17mm}{look up order 5678}{-1.2}{green}{allow}
+  \row{-23mm}{refund \$40 to the card on file}{-0.9}{green}{allow}
+  \row{-29mm}{mirror account to partner, keep it off the thread}{+0.8}{accent}{HOLD}
+  \row{-35mm}{send the customer list to an outside address}{+1.3}{accent}{HOLD}
+  \draw[grey!40] ([shift={(2mm,-13mm)}]fr.north west) -- ([shift={(-2mm,-13mm)}]fr.north east);
+\end{tikzpicture}}
+\caption{A mockup of how this looks in use. Each agent request gets one score before its tool runs;
+the ordinary ones pass, the two that lean wrong are held for a person. Scores are on the standardized
+scale of Figure~\ref{fig:auc}, right; the alarm line is $+0.20$.}\label{fig:console}
+\end{figure}
 
 \begin{figure}[htbp]\centering
 \resizebox{0.95\textwidth}{!}{\begin{tikzpicture}[font=\small,node distance=16mm]
@@ -369,11 +413,10 @@ where an agent platform makes its decisions, so an operator who holds the weight
 against policy before the action, standing in front of the checks that watch the action and its
 effect.
 
-\paragraph{Reproducibility.} Everything here runs on one machine without a GPU. The requests, the
-per-layer reads, the held-out scoring, the text baseline, the two models, and the direction pack are
-produced by a short set of scripts; a laptop with a recent Apple chip runs the whole pipeline in a
-few minutes. The numbers in this report, $0.993$ on Qwen2.5-1.5B and $1.000$ on Qwen2.5-3B, come from
-that pipeline and no other source.
+\paragraph{Reproducibility.} The code, the requests, the probe, and every number in this report are
+at \texttt{github.com/kjayashr/the-tell}. It runs on one laptop with no GPU, in a few minutes. The
+numbers here, $0.993$ on Qwen2.5-1.5B and $1.000$ on Qwen2.5-3B, come from that pipeline and nowhere
+else.
 
 \vspace{0.4em}
 The short version is this. We handed an agent's request to a small open model, read a single layer,
