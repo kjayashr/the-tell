@@ -9,3 +9,5 @@ the-tell.aux
 the-tell.log
 the-tell.out
 data/acts_third.npz
+media/
+_manim_smoketest.py

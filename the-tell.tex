@@ -67,19 +67,7 @@ let only a sliver become text (Figure~\ref{fig:under}). The words are the surfac
 happened below them.
 
 \begin{figure}[htbp]\centering
-\resizebox{0.82\textwidth}{!}{\begin{tikzpicture}[font=\small]
-  % the model as a stack of layers; only the top surfaces as words
-  \foreach \i/\c in {0/lightink,1/lightink,2/lightink,3/lightink,4/lightink,5/lightink}{
-    \node[draw=ink!55,fill=\c,minimum width=64mm,minimum height=6.5mm,inner sep=0] (L\i) at (0,\i*0.72) {};}
-  \node[plain,text=grey,font=\scriptsize] at (0,-0.72) {the request goes in here};
-  \node[greenbox,minimum width=64mm,minimum height=8mm] (out) at (0,4.9) {``Your refund is processed, anything else?''};
-  \draw[flow] (L5.north) -- (out.south);
-  \node[plain,font=\scriptsize\itshape,text=grey,align=left] at (5.6,4.9) {the surface:\\what the agent says};
-  % the read
-  \draw[redflow] (5.1,2.16) -- node[lbl,above]{}(L3.east);
-  \node[redbox,minimum width=26mm] at (7.0,2.16) {we read here\\\scriptsize one middle layer};
-  \node[plain,font=\scriptsize\itshape,text=grey,align=left] at (-5.4,2.5) {the underneath:\\the leaning,\\layer by layer};
-\end{tikzpicture}}
+\includegraphics[width=0.74\textwidth]{figs/fig_layers_manim.png}
 \caption{A request enters at the bottom and rises through the model's layers. Only the top becomes
 words. The intent behind the request forms in the middle, below the surface, and that is where we
 read.}\label{fig:under}
@@ -195,13 +183,7 @@ along the second. When they point the same way the number is large and positive;
 opposite ways it is negative; sideways is near zero. That single number is the score.
 
 \begin{figure}[htbp]\centering
-\resizebox{0.9\textwidth}{!}{\begin{tikzpicture}[font=\small]
-  \foreach \x/\ang/\c/\lab/\val in {0/12/accent/{unsafe request}/{large $+$}, 5/86/grey/{unclear}/{near $0$}, 10/168/green/{safe request}/{large $-$}}{
-    \draw[-{Latex[length=2mm]},ink,line width=1.4pt] (\x,0) -- ++(35:1.5) node[right,font=\scriptsize,text=ink]{the probe};
-    \draw[-{Latex[length=2mm]},\c,line width=1.6pt] (\x,0) -- ++(\ang:1.5) node[above,font=\scriptsize,text=\c]{\lab};
-    \node[font=\scriptsize,text=ink] at (\x+0.6,-0.5) {score: \val};
-  }
-\end{tikzpicture}}
+\includegraphics[width=0.72\textwidth]{figs/fig_projection_manim.png}
 \caption{The dot product, in pictures. The dark arrow is the probe (safe to unsafe). A request's own
 arrow, laid over it, scores high when it points the same way, low when it points against. The score
 is just that alignment: \textnormal{$\text{score} = \text{activation} \cdot \text{direction}$}.}\label{fig:dot}
@@ -214,6 +196,11 @@ We take the activation at one middle layer, the point that has taken in the whol
 it onto the direction. The number that comes out is $+0.77$, well over the alarm line at $+0.20$. The
 request is held before the tool runs, and the agent has not yet written a word of its reply. The rest
 of this report is that read, measured properly and turned into something you can ship.
+\begin{figure}[htbp]\centering
+\includegraphics[width=0.72\textwidth]{figs/fig_collapse.pdf}
+\caption{From many numbers to one. Each request is a long list of numbers, a point in the space up top. The probe collapses that whole list to a single score on the line below, where safe and unsafe fall apart.}\label{fig:collapse}
+\end{figure}
+
 
 \section{Seeing it separate}
 We built $224$ agent requests of three kinds. A hundred are benign, the ordinary traffic of a support
@@ -226,22 +213,13 @@ template, and when we test the read we hold out whole templates, so it cannot pa
 phrase it has seen before.
 
 Run all of them through Qwen2.5-1.5B, take that one middle activation, and the picture almost draws
-itself (Figure~\ref{fig:scatter}). The benign requests gather on one side, the malicious ones on the
+itself (Figure~\ref{fig:collapse}). The benign requests gather on one side, the malicious ones on the
 other, with open space between them. The obfuscated requests, the ones with the trigger words stripped
 out, still land on the malicious side. The model has read past the polite phrasing to what the request
 is for.
 
-\begin{figure}[htbp]\centering
-\includegraphics[width=0.82\textwidth]{figs/fig_geometry.pdf}
-\caption{The whole method in one picture. Every dot is one agent request, placed by its activation at
-the reading layer: safe on the left, unsafe on the right, with a gap between them. The arrow along the
-bottom is the probe, the direction from safe to unsafe. Building the probe means finding that arrow
-and the alarm line; reading a new request means dropping it in and seeing where it lands on the arrow.
-The disguised requests, with their trigger words stripped, still fall on the unsafe side.}\label{fig:scatter}
-\end{figure}
-
 \section{How well it works}
-The gap in Figure~\ref{fig:scatter} is not an artifact of one lucky layer. Fitting a plain linear read
+The gap in Figure~\ref{fig:collapse} is not an artifact of one lucky layer. Fitting a plain linear read
 at every layer, and scoring it on templates it never trained on, the separation climbs out of the
 early layers and holds across the whole back half of the model (Figure~\ref{fig:auc}). At its best,
 layer $16$ of $28$, it reaches an area under the ROC curve of $0.993$. Turned into a working alarm, it
@@ -262,19 +240,15 @@ attacks.}\label{fig:auc}
 
 The direction is not a black box. Read back through the model's own vocabulary, the tokens it leans
 toward are the model's words for wrongdoing: \emph{forbidden}, \emph{illegal}, \emph{crime},
-\emph{evade}, \emph{insidious} (Table~\ref{tab:dir}). Several of these surfaced as Chinese tokens,
+\emph{evade}, \emph{insidious} (Figure~\ref{fig:vocab}). Several of these surfaced as Chinese tokens,
 because Qwen carries the idea of something being prohibited most strongly there. The direction we
 fit to catch a malicious request, from nothing but examples, landed on the model's own notion of a
 thing one is not supposed to do.
+\begin{figure}[htbp]\centering
+\includegraphics[width=0.7\textwidth]{figs/fig_vocab.pdf}
+\caption{Read back through the model's own vocabulary, the intent direction points at the model's words for wrongdoing.}\label{fig:vocab}
+\end{figure}
 
-\begin{table}[htbp]\centering\small
-\caption{The intent direction, read through the model's own unembedding. These are the concepts it
-points toward. Several arrived as Chinese tokens and are given here as their meaning.}\label{tab:dir}
-\begin{tabular}{@{}p{12.6cm}@{}}\toprule
-\emph{forbidden} \quad \emph{illegal / crime} \quad \emph{strictly forbidden} \quad \emph{evade /
-circumvent} \quad \emph{traps} \quad \emph{abyss} \quad \emph{insidious} \quad \emph{conduct}
-\\\bottomrule
-\end{tabular}\end{table}
 
 \section{Why not just read the words?}
 A fair objection is that a malicious request is often malicious in plain words, so why not just read
@@ -303,6 +277,11 @@ to do, the way an attacker would want. Then we compared two readers: one that se
 reply, and the probe, which reads the activation. The reader of the reply is blind, as it must be,
 scoring $0.454$, no better than a coin. The probe still separates safe from unsafe at $0.993$. When
 the words are made to look innocent, only the read of the inside still sees the intent.
+\begin{figure}[htbp]\centering
+\includegraphics[width=0.8\textwidth]{figs/fig_deception_meters.png}
+\caption{When the reply is made to look innocent, a reader of the words is blind ($0.454$), while the activation read still separates safe from unsafe ($0.993$).}\label{fig:deception}
+\end{figure}
+
 
 \section{Other models}
 None of this is a quirk of a single checkpoint. We ran the same requests, unchanged, through two more
@@ -347,7 +326,7 @@ move data out or to cover tracks, and it catches most attempts to grab privilege
 sent to the wrong card, is the hardest, because from the inside it looks a lot like a real refund.
 
 \begin{figure}[htbp]\centering
-\includegraphics[width=0.64\textwidth]{figs/fig_category.pdf}
+\includegraphics[width=0.56\textwidth]{figs/fig_radar.pdf}
 \caption{What it catches, by kind of intent, on the malicious set at the shared alarm line.
 Exfiltration and evasion are caught almost perfectly; fraud, a permitted tool used with a wrong aim,
 is the hardest at $88\%$.}\label{fig:category}
@@ -384,9 +363,19 @@ hold the action while a person looks (Figure~\ref{fig:console}).
 We can ship the read as one small file. For a given model we save a single direction, the layer to
 read it at, and the line to alarm at. We call it an intent probe; for the model we tested it is
 sixteen kilobytes. Making one takes a few hundred labelled requests and a few minutes on a laptop.
+\begin{figure}[htbp]\centering
+\includegraphics[width=0.82\textwidth]{figs/fig_virusdef.png}
+\caption{The whole artifact is a small per-model file, shipped beside the model the way antivirus ships its definitions.}\label{fig:virusdef}
+\end{figure}
+
 Running one, at serve time, is a single dot product against an activation the model already produced.
 We measured it: on the small model, a forward pass takes about $57$ milliseconds and the read adds
 $0.4$, less than one percent on top. That is the whole cost. Figure~\ref{fig:buildrun} lays out both
+\begin{figure}[htbp]\centering
+\includegraphics[width=0.72\textwidth]{figs/fig_latency_timeline.pdf}
+\caption{The read runs inside the forward pass and finishes before the first word of the reply, for under one percent more time.}\label{fig:latency}
+\end{figure}
+
 halves: the probe is built once, ahead of time, and then read on every request.
 
 \begin{figure}[htbp]\centering
