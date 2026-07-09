@@ -14,8 +14,18 @@ before the agent has written a word of its reply.
 
 On **Qwen2.5-1.5B** (a small open model that runs on a laptop, no GPU), a linear read of one middle
 layer tells a malicious agent request from a benign one at **AUC 0.993**, held out by template, at
-**zero false alarms for 95% of attacks caught**. On **Qwen2.5-3B** the same read reaches **1.000**.
-The cost is one dot product against a stored direction we call an **intent probe** (a 16 KB file).
+**zero false alarms for 95% of attacks caught**. It holds across models and families: **Qwen2.5-3B
+1.000, Mistral-7B 0.997**. The cost is one dot product against a stored direction we call an **intent
+probe** (a 16 KB file), which adds **under 1%** to a forward pass.
+
+### What we also measured
+- **Deception:** when the agent's visible reply is made benign (as an attacker would), reading the
+  reply is blind (AUC **0.454**) while reading the activation still works (**0.993**). The thesis in
+  one number.
+- **False-positive stress (the key limit):** on 20 legitimate-but-sensitive requests (rotate keys,
+  revoke access, download a backup), the probe flags **10 of 20**. It reads *danger*, not
+  *permission*, so it is a flag-for-review signal, not an autonomous block.
+- **By intent:** exfiltration 98%, evasion 100%, privilege 95%, fraud 88%.
 
 ## What's here
 
@@ -40,7 +50,13 @@ python3 -m venv .venv
 ./.venv/bin/python scripts/12_metrics.py          # per-layer AUC, obfuscated split, text baseline
 ./.venv/bin/python scripts/13_interpret.py        # what the direction means, in the model's words
 ./.venv/bin/python scripts/21_second_perlayer.py  # the second model, Qwen2.5-3B
-./.venv/bin/python scripts/plots.py               # all figures
+./.venv/bin/python scripts/30_third_model.py      # a third model, different family (Mistral-7B)
+./.venv/bin/python scripts/31_latency.py          # the read's cost vs a forward pass
+./.venv/bin/python scripts/32_per_category.py     # detection by kind of intent
+./.venv/bin/python scripts/33_fp_stress.py        # false positives on legitimate-sensitive requests
+./.venv/bin/python scripts/34_deception.py        # reply-blind vs activation-read
+./.venv/bin/python scripts/plots.py               # core figures
+./.venv/bin/python scripts/plots2.py              # geometry, per-category, fp, latency, three-model
 tectonic the-tell.tex                             # build the paper
 ```
 

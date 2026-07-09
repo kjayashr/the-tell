@@ -1,0 +1,7 @@
+{
+ "forward_ms": 57.42,
+ "read_ms": 0.417,
+ "pct": 0.73,
+ "device": "mps",
+ "n": 30
+}

@@ -23,6 +23,7 @@
   redflow/.style={-{Latex[length=2.2mm]},draw=accent,thick},
   greenflow/.style={-{Latex[length=2.2mm]},draw=green,thick},
   lbl/.style={font=\scriptsize\itshape,text=grey,align=center}}
+\newcommand{\plainbox}[1]{\par\vspace{2pt}\begin{center}\begin{tikzpicture}\node[draw=ink!45,fill=lightink!55,rounded corners=3pt,text width=0.9\textwidth,inner sep=9pt,align=left,font=\small]{#1};\end{tikzpicture}\end{center}\vspace{2pt}}
 \title{\vspace{-2.4em}\textbf{You're an Open Book (Weights Included)}\\[5pt]\large Reading an agent's intent from open-weight model activations, before the tool call}
 \author{Krishnakantha Jayashree Chandrashekhar}
 \date{July 2026 \quad Technical Report}
@@ -46,8 +47,10 @@ model's own words for \emph{forbidden} and \emph{illegal}.
 
 We are plain about the edges: the read needs the model's weights, so it does not fit an agent behind
 a sealed API; the direction belongs to one model; it gives one score per request rather than pointing
-at the guilty phrase; and against wording that hides the intent in innocent words it only matches a
-plain text filter rather than beating it. Where it does fit, an operator who runs their own open
+at the guilty phrase; against wording that hides the intent in innocent words it only matches a plain
+text filter rather than beating it; and, most of all, it reads danger, not permission, so it
+over-flags legitimate but sensitive actions and belongs as a flag-for-review signal, not an automatic
+block. Where it does fit, an operator who runs their own open
 model, we show how it becomes a product: a small probe per model, loaded like a virus-definitions
 file, that reads an agent's intent before every action and holds the risky ones for a person to look
 at. Code and probe: \texttt{github.com/kjayashr/the-tell}.
@@ -117,6 +120,16 @@ if it can be read, then an operator who runs their own model could see what an a
 before it does it, on their own machine, with nothing leaving the building.
 
 \section{How we read it}
+A handful of words show up a lot in what follows. Here they are in one place, in plain terms.
+
+\plainbox{%
+\textbf{The words we use.}\\[2pt]
+\textbf{Activation} , a row of numbers the model computes as it reads. There is one row at every layer.\\
+\textbf{Layer} , one step of the model's work; it redoes the row of numbers dozens of times on the way through.\\
+\textbf{Direction} , an arrow through that space of numbers. Our arrow points from safe requests toward unsafe ones.\\
+\textbf{Dot product} , a way to measure how much a row of numbers points along an arrow. One number comes out. This is the whole scoring step.\\
+\textbf{Probe} , the arrow plus a layer plus an alarm line, saved in a small file. Reading a request is one dot product against it.}
+
 First, what we are reading. As the model takes in a request, it turns each word into a long list of
 numbers, and it builds that list fresh at every layer, dozens of times over, on the way from the
 input to the answer (Figure~\ref{fig:act}). One of those lists is an \emph{activation}. It is the
@@ -156,6 +169,13 @@ Read this way, a middle activation tells you what the model is leaning toward sa
 narrow slice of that space, the intent behind an agent's request, and ask whether it is legible enough
 in a small open model to build a product on.
 
+\plainbox{%
+\textbf{What ``through the unembedding'' means.} At the very end, a model turns its last row of
+numbers into a score for every word in its vocabulary, and the highest score is the next word it
+says. Those scores are called \emph{logits}. If you run a row of numbers from the middle of the model
+through that same final step, you get a peek at which words it is leaning toward there, halfway
+through its thinking, before it has committed to anything.}
+
 The read itself is almost nothing (Figure~\ref{fig:read}). We run the request through the model and
 take the activation at the last position, the point that has read the whole request. We hold a single
 \emph{direction} in that space, fixed ahead of time, that points from benign toward malicious. Reading
@@ -174,6 +194,25 @@ writes any of its answer, so it speaks before the agent acts.
 \end{tikzpicture}}
 \caption{The read. Run the request through the model, take one middle activation, project it onto a
 stored direction. One number comes out, before the agent replies.}\label{fig:read}
+\end{figure}
+
+The scoring step, the dot product, is worth a picture, because it is the whole calculation
+(Figure~\ref{fig:dot}). Think of the request's activation as an arrow, and the probe as another
+arrow pointing from safe toward unsafe. The dot product measures how much the first arrow points
+along the second. When they point the same way the number is large and positive; when they point
+opposite ways it is negative; sideways is near zero. That single number is the score.
+
+\begin{figure}[htbp]\centering
+\resizebox{0.9\textwidth}{!}{\begin{tikzpicture}[font=\small]
+  \foreach \x/\ang/\c/\lab/\val in {0/12/accent/{unsafe request}/{large $+$}, 5/86/grey/{unclear}/{near $0$}, 10/168/green/{safe request}/{large $-$}}{
+    \draw[-{Latex[length=2mm]},ink,line width=1.4pt] (\x,0) -- ++(35:1.5) node[right,font=\scriptsize,text=ink]{the probe};
+    \draw[-{Latex[length=2mm]},\c,line width=1.6pt] (\x,0) -- ++(\ang:1.5) node[above,font=\scriptsize,text=\c]{\lab};
+    \node[font=\scriptsize,text=ink] at (\x+0.6,-0.5) {score: \val};
+  }
+\end{tikzpicture}}
+\caption{The dot product, in pictures. The dark arrow is the probe (safe to unsafe). A request's own
+arrow, laid over it, scores high when it points the same way, low when it points against. The score
+is just that alignment: \textnormal{$\text{score} = \text{activation} \cdot \text{direction}$}.}\label{fig:dot}
 \end{figure}
 
 Here is one request from start to finish. The agent is handed: ``refund my \$40 double charge, and
@@ -201,10 +240,12 @@ out, still land on the malicious side. The model has read past the polite phrasi
 is for.
 
 \begin{figure}[htbp]\centering
-\includegraphics[width=0.74\textwidth]{figs/fig_scatter.pdf}
-\caption{Every dot is one agent request, placed by its activation at the reading layer. Benign on the
-left, malicious on the right, with a gap down the middle. The read has not seen the words; it has read
-the model's own state.}\label{fig:scatter}
+\includegraphics[width=0.82\textwidth]{figs/fig_geometry.pdf}
+\caption{The whole method in one picture. Every dot is one agent request, placed by its activation at
+the reading layer: safe on the left, unsafe on the right, with a gap between them. The arrow along the
+bottom is the probe, the direction from safe to unsafe. Building the probe means finding that arrow
+and the alarm line; reading a new request means dropping it in and seeing where it lands on the arrow.
+The disguised requests, with their trigger words stripped, still fall on the unsafe side.}\label{fig:scatter}
 \end{figure}
 
 \section{How well, and where}
@@ -253,8 +294,6 @@ the words (Figure~\ref{fig:vs}, right). We state this without dressing it up. On
 activation read is not a large edge over reading text; its value is that it reads the model's own
 state rather than the surface string, so it does not depend on the incriminating words ever being
 present, and it is the only one of the two that can see an agent lean one way while it writes another.
-Building that last case at scale, an agent that says one thing to the user and means another, is the
-work that matters most and the hardest to stage in a small aligned model that tends to simply refuse.
 
 \begin{figure}[htbp]\centering
 \begin{minipage}{0.47\textwidth}\centering
@@ -265,19 +304,32 @@ work that matters most and the hardest to stage in a small aligned model that te
 overall; once the trigger words are stripped and the wording is unseen, the two are level.}\label{fig:vs}
 \end{figure}
 
-\section{Not one model}
-None of this is a quirk of a single checkpoint. We ran the same requests, unchanged, through
-Qwen2.5-3B, took the same last-position activation, and fit the same read held out by template. It
-reaches a clean $1.000$, and it does so at its own depth, layer $25$ of $36$ rather than $16$ of $28$
-(Figure~\ref{fig:two}). Two open models of different sizes both carry the intent, each in a place and
-along a direction of its own. That is the shape of the thing to build: one direction per model, found
-once, checked for pennies on every request.
+That last point is the one that matters most, so we set up a clean version of it. A compromised agent
+does not announce what it is doing; it reassures the user. So we gave every request the same kind of
+calm, benign reply, ``Done, your request has been processed,'' regardless of what it was really asked
+to do, the way an attacker would want. Then we compared two readers: one that sees only that visible
+reply, and the probe, which reads the activation. The reader of the reply is blind, as it must be,
+scoring $0.454$, no better than a coin. The probe still separates safe from unsafe at $0.993$. When
+the words are made to look innocent, only the read of the inside still sees the intent. This is the
+whole thesis in one number.
+
+\section{Not one model, and not one family}
+None of this is a quirk of a single checkpoint. We ran the same requests, unchanged, through two more
+open models and fit the same read, held out by template, on each. Qwen2.5-3B reaches a clean $1.000$.
+Mistral-7B, from an entirely different family, reaches $0.997$. All three carry the intent, and each
+carries it at its own depth: layer $16$ of $28$, $25$ of $36$, $14$ of $32$ (Figure~\ref{fig:two}).
 
 \begin{figure}[htbp]\centering
-\includegraphics[width=0.66\textwidth]{figs/fig_twomodel.pdf}
-\caption{The same read on two open models, plotted against relative depth. Both separate intent
-cleanly; each does it in its own layer, which is why the artifact is per model.}\label{fig:two}
+\includegraphics[width=0.66\textwidth]{figs/fig_threemodel.pdf}
+\caption{The same read on three open models across two families, plotted against relative depth. All
+separate intent cleanly, each in its own layer, which is why the probe is built per model.}\label{fig:two}
 \end{figure}
+
+This is the shape of the thing to build: one probe per model, found once, then checked for pennies on
+every request. A probe does not carry from one model to another, and it cannot, because it is a
+list of numbers as wide as that model's activations, $1536$ numbers for one, $4096$ for another. A
+probe from the first model is not even the right size to lay against the second. That is not a
+weakness to apologize for; it is why the product is a library rather than a single file.
 
 \section{What it catches}
 The read is trained on intent, not on any one attack, so it sorts attacks by the intent underneath
@@ -298,6 +350,18 @@ Tell the user one thing while doing another & Deception \\
 Remove the trace, skip the approval & Evasion and anti-audit behavior \\
 Open an access, weaken a control & Privilege and configuration abuse \\\bottomrule
 \end{tabular}\end{table}
+
+Broken out by kind, the read is strongest where the intent is unambiguous and weakest where a
+permitted tool is turned to a bad end (Figure~\ref{fig:category}). It catches nearly every attempt to
+move data out or to cover tracks, and it catches most attempts to grab privilege. Fraud, a real refund
+sent to the wrong card, is the hardest, because from the inside it looks a lot like a real refund.
+
+\begin{figure}[htbp]\centering
+\includegraphics[width=0.64\textwidth]{figs/fig_category.pdf}
+\caption{What it catches, by kind of intent, on the malicious set at the shared alarm line.
+Exfiltration and evasion are caught almost perfectly; fraud, a permitted tool used with a wrong aim,
+is the hardest at $88\%$.}\label{fig:category}
+\end{figure}
 
 \section{Where it sits}
 A tool call has three moments, and each lets in a different kind of check (Figure~\ref{fig:when}).
@@ -330,9 +394,10 @@ hold the action while a person looks (Figure~\ref{fig:console}).
 We can ship the read as one small file. For a given model we save a single direction, the layer to
 read it at, and the line to alarm at. We call it an intent probe; for the model we tested it is
 sixteen kilobytes. Making one takes a few hundred labelled requests and a few minutes on a laptop.
-Running one, at serve time, is a single dot product against an activation the model already produced,
-so it costs almost nothing next to the work the model is already doing. Figure~\ref{fig:buildrun}
-lays out both halves: the probe is built once, ahead of time, and then read on every request.
+Running one, at serve time, is a single dot product against an activation the model already produced.
+We measured it: on the small model, a forward pass takes about $57$ milliseconds and the read adds
+$0.4$, less than one percent on top. That is the whole cost. Figure~\ref{fig:buildrun} lays out both
+halves: the probe is built once, ahead of time, and then read on every request.
 
 \begin{figure}[htbp]\centering
 \resizebox{0.96\textwidth}{!}{\begin{tikzpicture}[font=\small,node distance=7mm]
@@ -471,17 +536,33 @@ agents.}\label{fig:who}
 \end{figure}
 
 \section{What it costs and what it misses}\label{sec:limits}
-We are direct about the edges. The read needs the model's weights, so it does not reach an agent on a
-hosted API. The direction belongs to one model and would be recomputed when that model is fine-tuned.
-The read is one score for the whole request and does not point inside it; we looked for a per-word
-signal and it was flat, so the read says ``this request leans wrong'' rather than ``here is the wrong
-part.'' Against wording that hides intent in ordinary phrasing it is level with a text classifier, not
-ahead, so on that cut the win is generality and placement rather than raw accuracy. And the case where
-reading the inside should matter most, an aligned agent that complies with a hidden instruction while
-assuring the user it did not, is the one that is hardest to stage in a small model that tends to
-refuse outright; making it at scale is the next step. None of these unsettle the finding. On a small
-open model, run on a laptop, an agent's intent is legible in the activations, before it acts, for the
-cost of a single dot product.
+The most important limit we found is worth stating first and plainly, because it is easy to miss. The
+probe reads \emph{danger}, not \emph{permission}. We stress-tested it on twenty requests that are
+sensitive but entirely legitimate and authorized: rotate the staging keys on schedule, revoke a
+departed employee's access, download the production backup to the vault, approve a pull request once
+tests pass. The probe flagged ten of the twenty (Figure~\ref{fig:fp}). It cannot, on its own, tell an
+authorized sensitive action from a malicious one, because both look dangerous from the inside. So it
+is a first-pass filter that says ``this deserves a look,'' not a judge that says ``this is not
+allowed.'' In a product it flags for review and hands the authorized-or-not question to the policy
+layer; it must not be wired to block on its own.
+
+\begin{figure}[htbp]\centering
+\includegraphics[width=0.74\textwidth]{figs/fig_fp.pdf}
+\caption{The stress test. Twenty legitimate, authorized, but sensitive requests, scored by the probe.
+Half of them, ten, land over the alarm line. The probe reacts to how dangerous an action sounds, not
+to whether it is allowed, which is why it belongs upstream of a policy check, not in place of
+one.}\label{fig:fp}
+\end{figure}
+
+The rest of the edges are the familiar ones. The read needs the model's weights, so it does not reach
+an agent on a hosted API. The direction belongs to one model and would be recomputed when that model
+is fine-tuned. The read is one score for the whole request and does not point inside it; we looked for
+a per-word signal and it was flat, so the read says ``this request leans wrong'' rather than ``here is
+the wrong part.'' Against wording that hides intent in ordinary phrasing it is level with a text
+classifier, not ahead, so on that cut the win is generality and placement rather than raw accuracy.
+None of these unsettle the finding. On a small open model, run on a laptop, an agent's intent is
+legible in the activations, before it acts, for the cost of a single dot product, as long as you ask
+it the question it can answer: not ``is this allowed,'' but ``does this lean dangerous.''
 
 \section{Where this goes}
 The near work is more models and a maintained probe for each, harder obfuscation to find the point
@@ -493,8 +574,8 @@ effect.
 
 \paragraph{Reproducibility.} The code, the requests, the probe, and every number in this report are
 at \texttt{github.com/kjayashr/the-tell}. It runs on one laptop with no GPU, in a few minutes. The
-numbers here, $0.993$ on Qwen2.5-1.5B and $1.000$ on Qwen2.5-3B, come from that pipeline and nowhere
-else.
+numbers here, $0.993$ on Qwen2.5-1.5B, $1.000$ on Qwen2.5-3B, and $0.997$ on Mistral-7B, come from
+that pipeline and nowhere else.
 
 \vspace{0.4em}
 The short version is this. We handed an agent's request to a small open model, read a single layer,

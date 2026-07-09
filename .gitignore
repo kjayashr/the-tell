@@ -8,3 +8,4 @@ __pycache__/
 the-tell.aux
 the-tell.log
 the-tell.out
+data/acts_third.npz
