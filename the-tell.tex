@@ -45,21 +45,13 @@ phrasings so it cannot win by memorizing words, and it does so with no false ala
 $95\%$ of attacks. The same read reaches $1.000$ on Qwen2.5-3B. The direction it finds lands on the
 model's own words for \emph{forbidden} and \emph{illegal}.
 
-We are plain about the edges: the read needs the model's weights, so it does not fit an agent behind
-a sealed API; the direction belongs to one model; it gives one score per request rather than pointing
-at the guilty phrase; against wording that hides the intent in innocent words it only matches a plain
-text filter rather than beating it; and, most of all, it reads danger, not permission, so it
-over-flags legitimate but sensitive actions and belongs as a flag-for-review signal, not an automatic
-block. Where it does fit, an operator who runs their own open
-model, we show how it becomes a product: a small probe per model, loaded like a virus-definitions
-file, that reads an agent's intent before every action and holds the risky ones for a person to look
-at. Code and probe: \texttt{github.com/kjayashr/the-tell}.
+The edges are real. The read needs the model's weights, so it does not fit an agent behind a sealed
+API. The direction belongs to one model. And it reads danger, not permission, so it over-flags
+legitimate but sensitive actions: a flag-for-review signal, not an automatic block. Where it fits, an
+operator running their own open model, it becomes a product: a small probe per model, loaded like a
+virus-definitions file, that reads intent before every action. Code and probe:
+\texttt{github.com/kjayashr/the-tell}.
 \end{abstract}
-
-\noindent\textbf{Working rules.} (1) Read the model's own activations, not the words it prints; the
-words can stay clean while the activations lean. (2) Report a number only where a held-out
-measurement supports it, and hold out whole templates so the read cannot win on phrasing. (3) Put the
-limits next to the results; where reading the inside does not beat reading the surface, say so.
 
 \section{The underneath}
 Even as you read this sentence, your body is doing things you never asked it to. You are breathing.
@@ -248,7 +240,7 @@ and the alarm line; reading a new request means dropping it in and seeing where 
 The disguised requests, with their trigger words stripped, still fall on the unsafe side.}\label{fig:scatter}
 \end{figure}
 
-\section{How well, and where}
+\section{How well it works}
 The gap in Figure~\ref{fig:scatter} is not an artifact of one lucky layer. Fitting a plain linear read
 at every layer, and scoring it on templates it never trained on, the separation climbs out of the
 early layers and holds across the whole back half of the model (Figure~\ref{fig:auc}). At its best,
@@ -284,13 +276,13 @@ circumvent} \quad \emph{traps} \quad \emph{abyss} \quad \emph{insidious} \quad \
 \\\bottomrule
 \end{tabular}\end{table}
 
-\section{Reading the inside against reading the words}
+\section{Why not just read the words?}
 A fair objection is that a malicious request is often malicious in plain words, so why not just read
 the words. We ran that baseline, a term-frequency classifier over the same requests and the same
 held-out split. Across all requests the activation read is ahead, $0.993$ to $0.936$
 (Figure~\ref{fig:vs}, left). On the obfuscated requests, where we pulled out the trigger words and
 tested on phrasing neither method had seen, the two draw level, $0.925$ for the read and $0.930$ for
-the words (Figure~\ref{fig:vs}, right). We state this without dressing it up. On this task the
+the words (Figure~\ref{fig:vs}, right). On this task the
 activation read is not a large edge over reading text; its value is that it reads the model's own
 state rather than the surface string, so it does not depend on the incriminating words ever being
 present, and it is the only one of the two that can see an agent lean one way while it writes another.
@@ -310,10 +302,9 @@ calm, benign reply, ``Done, your request has been processed,'' regardless of wha
 to do, the way an attacker would want. Then we compared two readers: one that sees only that visible
 reply, and the probe, which reads the activation. The reader of the reply is blind, as it must be,
 scoring $0.454$, no better than a coin. The probe still separates safe from unsafe at $0.993$. When
-the words are made to look innocent, only the read of the inside still sees the intent. This is the
-whole thesis in one number.
+the words are made to look innocent, only the read of the inside still sees the intent.
 
-\section{Not one model, and not one family}
+\section{Other models}
 None of this is a quirk of a single checkpoint. We ran the same requests, unchanged, through two more
 open models and fit the same read, held out by template, on each. Qwen2.5-3B reaches a clean $1.000$.
 Mistral-7B, from an entirely different family, reaches $0.997$. All three carry the intent, and each
@@ -328,8 +319,7 @@ separate intent cleanly, each in its own layer, which is why the probe is built 
 This is the shape of the thing to build: one probe per model, found once, then checked for pennies on
 every request. A probe does not carry from one model to another, and it cannot, because it is a
 list of numbers as wide as that model's activations, $1536$ numbers for one, $4096$ for another. A
-probe from the first model is not even the right size to lay against the second. That is not a
-weakness to apologize for; it is why the product is a library rather than a single file.
+probe from the first model is not even the right size to lay against the second. It is why the product is a library, not a single file.
 
 \section{What it catches}
 The read is trained on intent, not on any one attack, so it sorts attacks by the intent underneath
@@ -384,7 +374,7 @@ replace the later two; it stands in front of them.
 anything.}\label{fig:when}
 \end{figure}
 
-\section{How we can turn this into a product}
+\section{The product}
 The problem we can solve is narrow and real. An agent that has been talked into something, by a hidden
 line in a document it read, a poisoned support ticket, a jailbreak, acts before anyone can stop it.
 The tool call goes out, the money moves, the file leaves, and the first anyone hears of it is the
@@ -535,9 +525,8 @@ open models: regulated, sovereign, air-gapped, and the platforms that host model
 agents.}\label{fig:who}
 \end{figure}
 
-\section{What it costs and what it misses}\label{sec:limits}
-The most important limit we found is worth stating first and plainly, because it is easy to miss. The
-probe reads \emph{danger}, not \emph{permission}. We stress-tested it on twenty requests that are
+\section{Where it breaks}\label{sec:limits}
+The probe reads \emph{danger}, not \emph{permission}, and that is the limit that matters most. We stress-tested it on twenty requests that are
 sensitive but entirely legitimate and authorized: rotate the staging keys on schedule, revoke a
 departed employee's access, download the production backup to the vault, approve a pull request once
 tests pass. The probe flagged ten of the twenty (Figure~\ref{fig:fp}). It cannot, on its own, tell an
@@ -560,11 +549,11 @@ is fine-tuned. The read is one score for the whole request and does not point in
 a per-word signal and it was flat, so the read says ``this request leans wrong'' rather than ``here is
 the wrong part.'' Against wording that hides intent in ordinary phrasing it is level with a text
 classifier, not ahead, so on that cut the win is generality and placement rather than raw accuracy.
-None of these unsettle the finding. On a small open model, run on a laptop, an agent's intent is
+On a small open model, run on a laptop, an agent's intent is
 legible in the activations, before it acts, for the cost of a single dot product, as long as you ask
 it the question it can answer: not ``is this allowed,'' but ``does this lean dangerous.''
 
-\section{Where this goes}
+\section{What's next}
 The near work is more models and a maintained probe for each, harder obfuscation to find the point
 where reading the inside pulls clear of reading the words, and the deception case above, an agent that
 says one thing and means another, read at the instant it decides. The longer arc is to place this read
